@@ -1,0 +1,39 @@
+# Flutter / Dart
+**/build/
+**/.dart_tool/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/.packages
+**/.pub/
+**/.pub-cache/
+**/coverage/
+
+# Android
+**/android/.gradle/
+**/android/local.properties
+**/android/app/release/
+**/android/app/build/
+**/*.apk
+**/*.aab
+
+# iOS / macOS
+**/ios/Flutter/.last_build_id
+**/ios/Flutter/ephemeral/
+**/ios/Flutter/Generated.xcconfig
+**/ios/Flutter/flutter_export_environment.sh
+**/ios/Runner/GeneratedPluginRegistrant.*
+**/macos/Flutter/ephemeral/
+
+# IDE & Tools
+.idea/
+*.iml
+.vscode/
+*.ipr
+*.iws
+
+# OS & Temp
+.DS_Store
+Thumbs.db
+*.tmp
+*.bak
+*.log

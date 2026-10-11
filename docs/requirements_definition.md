@@ -1,182 +1,155 @@
-# プロトタイプ設計（概要）
+# 要件定義書（MVP）
 
-**目的**：スマホアプリで「バイク用インカム風」リアルタイム音声通話を、原則ローカル（同一Wi-Fi / P2P /近接）で動かし、拡張でクラウド経由（Web）を使えるようにする。最初は4人までの低遅延通話を想定。
-
-**基本戦略（高レベル）**
-
-* 音声メディアは **WebRTC（Opus）ベースのP2Pメッシュ** を第一選択とする。4人程度ならメッシュ（各端末が全員に直接送る）は帯域/計算で許容でき、クラウドSFUを不要にできるため“ローカル優先”に合致。必要なら将来ローカルSFU（Raspberry Pi 等）を追加。([Stream][1])
-* 端末発見／シグナリング（接続セットアップ）は **ローカル検出 + 軽量シグナリング** を採用：iOSは**MultipeerConnectivity**、Androidは**Nearby Connections / Wi-Fi Direct** を基本に、互換が必要な場面は mDNS/UDP または Bluetooth LE（制御チャネル）でブリッジ。([Apple Developer][2])
-* Bluetooth は **オーディオの主運搬路には使わない**（BLE帯域不足 / プロファイル制約）。代わりに **BLEは検出・制御（ボタン、ペアリング情報共有）に利用**。ヘッドセット音声はOSが管理する（ヘッドセットはシステム経由でアプリのマイク/出力にルーティング）。
-* 完全オフラインの近接（インターネット無し）でも動く設計にする（STUN等に依存しないローカルICE候補、ローカルシグナリング）。
+| 項目 | 内容 |
+|---|---|
+| 版 | v0.2（2026-10-11 方針見直し） |
+| 前版 | [archive/initial_prototype_design.md](archive/initial_prototype_design.md) |
+| 関連 | [architecture.md](architecture.md)（方式設計） |
 
 ---
 
-# 1. アーキテクチャ図（テキスト版）
+## 1. 目的
 
-```
-[Device A]  \
-[Device B]   --- (local mesh via WebRTC P2P over Wi-Fi / Wi-Fi Direct) --- [Device C]
-[Device D]  /
- 
-Discovery & signaling:
- - iOS: MultipeerConnectivity  -> exchange SDP/ICE (or act as discovery + open UDP mDNS)
- - Android: Nearby Connections / Wi-Fi Direct -> exchange SDP/ICE
- - Cross-OS: fallback to BLE-control for bootstrapping, then switch to Wi-Fi data.
+スマホだけで動く「バイク用インカム風」のグループ音声通話アプリを作る。
+インターネットやクラウドに依存せず、**同じネットワーク（LAN）にいる仲間と常時つながる** ことを目的とする。
 
-Optional:
- - Local SFU on portable device (Raspberry Pi) running Pion/Janus if mesh becomes heavy.
- - Cloud SFU for remote bridging when user chooses "web mode".
-```
+## 2. 前提と方針（決定事項）
 
----
+| # | 決定事項 | 理由 |
+|---|---|---|
+| D1 | **スマホのみで通信**（専用中継機・クラウドは使わない） | 追加機材なしで始められる |
+| D2 | **「全員が同じLANにいる」ことだけを前提にする** | ネットワークの用意の仕方（テザリング／Wi-Fiルーター／将来の中継機）をアプリから切り離せる。iOS/Android混在も自然に解決する |
+| D3 | 基本の使い方は **1人のスマホがテザリング親機** になり、他の人がそこへ接続する | APが無い屋外でも0円で成立する |
+| D4 | **Flutter** で実装（まずAndroid、将来iOS） | 1つのコードで両OSに対応できる |
+| D5 | MultipeerConnectivity / Nearby Connections / Wi-Fi Direct / BLEブリッジは **採用しない** | D2で不要になった。実装量を大幅に削減 |
+| D6 | 開発・テストは **実機（Android 2台以上）** で行う。エミュレータは使わない | PC負荷軽減。音声・Wi-Fiは実機でないと検証できない |
 
-# 2. コンポーネント詳細
+### 2.1 通信距離についての注意（受け入れ済みの制約）
 
-## 2.1 ネットワーク・モード（優先順）
+スマホのWi-Fiが安定して届く距離は **数十m程度** が目安。ポケット内・走行中はさらに短くなる。
+したがって MVP の想定シーンは次のとおりとし、**車間が大きく開く隊列走行は対象外** とする。
 
-1. **Same Wi-Fi / infrastructure LAN** — fastest & simplest. Use WebRTC P2P, local IP candidates discovered via mDNS/UDP.
-2. **Peer-to-Peer Wi-Fi / Wi-Fi Direct** — when no AP is present. Android Wi-Fi Direct API、iOSはMultipeerのP2P Wi-Fiトランスポートを活用。([Android Developers][3])
-3. **Nearby/Multipeer over Bluetooth** — 発見・シグナリングに利用（実データはWi-Fiへ）。NearbyはBluetooth+Wi-Fiを組み合わせた戦略がある。([サイエンスダイレクト][4])
-4. **Bluetooth（BLE）** — 音声ストリームには不採用（帯域/プロファイルのため）。BLEは小さなメタ情報（ボタン押下、招待トークン）やカスタムペアリングのために使う。
+## 3. 想定シーン
 
-## 2.2 メディアパス
+| シーン | 例 | 優先度 |
+|---|---|---|
+| S1 タンデム | 運転者と同乗者（親機＝どちらかのスマホ） | 高 |
+| S2 詰めた隊列 | 車間の短い2〜4台の走行・渋滞中 | 高 |
+| S3 休憩・停車中 | PA/道の駅・キャンプ場での会話 | 中 |
+| S4 同一Wi-Fi | 自宅・宿のWi-Fiでの動作確認 | 中（開発用にも使う） |
 
-* **Media codec**: Opus (WebRTC標準)
-* **Library**: libwebrtc (ネイティブiOS/Android)、もしくは WebRTC ラッパー（React Native などを使う場合）
-* **Topology**: Full mesh (n*(n-1)/2 peer connections). n=4 → 6 RTCPeerConnections：実用的。([Stream][1])
-* **Alternatives**: ローカルSFU（Pion/Janus）をローカルLAN内に置くと、端末負荷と上行帯域を大幅に削減可能（ただしSFUホストが必要）。([digitalsamba.com][5])
+## 4. 利用者・規模
 
-## 2.3 発見とシグナリング
+- 1ルームあたり **最大4人**（5人目は参加を拒否）
+- 同時に複数ルームが同一LAN上にあってもよい（一覧から選ぶ）
+- アカウント登録なし。表示名とアイコン色だけを端末内に保存する
 
-* **iOS**: MultipeerConnectivity（自動発見 + 信頼できるローカルシグナリング）。([Apple Developer][2])
-* **Android**: Nearby Connections API（発見 & P2P接続）。必要に応じて Wi-Fi Direct にフォールバック。([Google for Developers][6])
-* **Cross-platformブリッジ**:
+## 5. 機能要件（MVP）
 
-  * 1. 互いに相手OSの発見方法を実装（iOS→Multipeer、Android→Nearby）で混在環境に対応する。
-  * 2. あるいは BLE を利用して「会話ルームのID」と「ローカルIP候補」を共有 → そこから直接 WebRTC SDP/ICE を交換（UDP mDNS または短距離HTTP over Wi-Fi）。
-* **シグナリング内容**：SDP offer/answer、ICE candidates、room control messages（mute/unmute、priority）を交換。
+UI/操作感は **Discordのボイスチャンネル** をイメージする。
 
-## 2.4 ローカルSFUオプション（拡張）
+### 5.1 ルーム（Discordの「ボイスチャンネル」に相当）
 
-* 小規模で低遅延をさらに確保したい場合、ローカルに **軽量SFU（Pion SFU / Janus）を Raspberry Pi 4 や携帯ルータ上に展開**。これによりメッシュ→SFUに切り替え可能（端末負荷削減、上行帯域削減）。([digitalsamba.com][5])
+| ID | 要件 |
+|---|---|
+| F-01 | 「ルームを作る」でルーム名を付けて作成できる。作成した端末が **ホスト** になる |
+| F-02 | 同じLAN上のルームが **自動で一覧表示** される（参加人数つき） |
+| F-03 | 一覧のルームを **タップするだけで参加** できる（Discordと同じ。承認ダイアログは出さない） |
+| F-04 | 自動検出できない場合のため **QRコード / IPアドレス入力で参加** できる |
+| F-05 | ルームに **4桁のPIN** を任意で設定できる（他グループの誤参加防止） |
+| F-06 | ホストが退出したらルームは終了し、参加者に通知する（MVPではホスト引き継ぎなし） |
 
----
+### 5.2 通話
 
-# 3. 実装の詳細（OS別）
+| ID | 要件 |
+|---|---|
+| F-10 | 参加した瞬間から **常時通話**（全員の声が常に聞こえる。ボタン操作不要） |
+| F-11 | **ミュート**（自分の声を送らない） |
+| F-12 | **スピーカーミュート**（Discordの「スピーカーミュート」。全員の声を聞かない＋自分もミュート） |
+| F-13 | 参加者ごとの **個別音量調整**（0〜200%）。参加者を長押しで表示 |
+| F-14 | **話している人の表示**（アイコンの周りが光る。Discordの緑の輪に相当） |
+| F-15 | 参加者のミュート状態をアイコンで表示 |
+| F-16 | 入室・退室時に **効果音** を鳴らす（ヘルメット内でも状況がわかるように） |
 
-## iOS（推奨構成）
+### 5.3 オーディオ機器（ヘッドセット対応）
 
-* **Discovery/Signaling**: MultipeerConnectivity（MCNearbyServiceBrowser + MCNearbyServiceAdvertiser）。初期SDP/ICEのやり取りをMCSessionのストリーミング機能で行う。([Apple Developer][2])
-* **Media**: AVAudioEngine → WebRTC のネイティブ API に接続（マイク取得 → Opusエンコード → RTP送出）。AVAudioSessionカテゴリは `.playAndRecord`、Bluetoothヘッドセットを許可するオプションを適切に設定。
-* **Permissions**: マイク、Local Network（iOS 14+：ローカルネットワーク権限）、Bluetooth（必要なら）。
-* **Background**: 音声通話を維持するための Background Modes: Audio を設定。
+| ID | 要件 |
+|---|---|
+| F-20 | 出力先を **切り替え** できる：スピーカー / 受話口 / 有線イヤホン / Bluetoothヘッドセット |
+| F-21 | Bluetoothヘッドセット（インカム含む）を接続したら **自動でそちらに切り替える** |
+| F-22 | ヘッドセットが切断されたら直前の出力先（既定はスピーカー）へ **自動で戻す** |
+| F-23 | 通話画面から **ワンタップで出力先メニュー** を開ける（Discordのスピーカーアイコン相当） |
+| F-24 | 現在の出力先がアイコンでわかる |
 
-## Android（推奨構成）
+### 5.4 設定（Discordの「ユーザー設定 > 音声」に相当）
 
-* **Discovery/Signaling**: Nearby Connections API（推奨）または Wi-Fi Direct API。Nearbyは Bluetooth/Wi-Fi を抽象化してくれる。([Google for Developers][6])
-* **Media**: AudioRecord / AudioTrack でキャプチャと再生 → WebRTC ネイティブライブラリへルーティング。
-* **Permissions**: マイク、位置（Wi-Fi Direct/Nearbyで必要になる場合）、Bluetooth（BLEコントロール時）。
-* **Background**: Foreground Service を立てて通話を維持。
+| ID | 要件 |
+|---|---|
+| F-30 | プロフィール：表示名、アイコン色 |
+| F-31 | 音声：既定の出力先、入力音量、出力音量 |
+| F-32 | 音声処理：**ノイズ抑制** ON/OFF（既定ON・風切り音対策）、エコー除去 ON/OFF、自動ゲイン ON/OFF |
+| F-33 | **入力感度**（自動 / 手動しきい値）。しきい値未満の音は送らない（ノイズゲート） |
+| F-34 | 入退室の効果音 ON/OFF |
+| F-35 | マイクテスト（自分の声のレベルメーター表示） |
 
----
+### 5.5 バックグラウンド動作
 
-# 4. Bluetooth の役割（明確）
+| ID | 要件 |
+|---|---|
+| F-40 | **画面OFF・他アプリ使用中でも通話を継続**する |
+| F-41 | 通話中は通知領域に常駐表示し、そこから **ミュート / 退出** できる |
 
-* **音声トンネル**としてのBluetooth（HFP）をアプリ側で直接作るのは不可・推奨されない（OSの制約、互換性問題）。代わりに：
+## 6. 非機能要件
 
-  * BLE は「招待トークン共有」「ボタンイベント（インカムボタン→ミュート/ペアリング）」「デバイスメタデータ同期」に使う。
-  * 実際の音声は WebRTC over Wi-Fi（またはWi-Fi Direct）経由で送受信。
-    （※既存インカムヘッドセットを使う場合は、ヘッドセットがシステムで接続されたときにアプリの音声が自動的にそのヘッドセットにルーティングされる点に留意）
+| ID | 区分 | 要件 | 目標値 |
+|---|---|---|---|
+| N-01 | 遅延 | 口から耳までの片道遅延 | **200ms以下**（目標150ms） |
+| N-02 | 接続 | ルームタップから通話開始まで | 3秒以内 |
+| N-03 | 復帰 | 一時的に電波が途切れた後の **自動再接続** | 途切れ解消から5秒以内に復帰 |
+| N-04 | 安定性 | 4人で連続通話 | 2時間以上切れずに継続 |
+| N-05 | 電池 | 通話中の電池消費 | 1時間あたり15%以下（参考値・実測で見直し） |
+| N-06 | 通信 | インターネット接続 | **不要**（完全オフラインで動作） |
+| N-07 | 秘匿 | 通話内容 | 暗号化して送る（WebRTC標準のDTLS-SRTP） |
+| N-08 | 対応OS | Android | Android 8.0（API 26）以上 |
+| N-09 | 操作 | グローブ着用を考慮 | 主要ボタンは大きく（48dp以上、通話画面は72dp目安） |
 
----
+### 6.1 通信品質の指標
 
-# 5. 低遅延チューニング（実践的アドバイス）
+通信距離や実用性を **数値で評価するための指標**。テスト（特に距離・実走テスト）の判定基準として使う。
 
-* **Opus設定**：低レイテンシモード（frame size短め、低の遅延プリセット）を利用。
-* **Packetization**：小さめの RTP パケット、FEC/再送のトレードオフを適切に設定。
-* **ネットワーク**：Wi-Fiチャネル干渉を避ける（5GHz推奨）。Wi-Fi DirectやAd-hocは距離に強い。
-* **CPU負荷**：エンコード設定を調整。メッシュだと送信数が増えるので端末負荷が上がる点に注意。
-* **目標**：短距離ローカルなら**往復 latency < 100–150 ms**を目指す（現実的な目標）。sonoBus等のアプリがローカルで低遅延配信の実例あり。([sonobus.net][7])
+| ID | 指標 | 意味 | 🟢 良好 | 🟡 注意 | 🔴 不良 |
+|---|---|---|---|---|---|
+| Q-01 | 電波強度（RSSI） | Wi-Fiの受信の強さ | -67dBm以上 | -67〜-75dBm | -75dBm未満（-80dBm付近で切断） |
+| Q-02 | 往復遅延（RTT） | 相手まで行って戻るまでの時間 | 50ms未満 | 50〜150ms | 150ms以上 |
+| Q-03 | パケット欠落率 | 届かなかった音声データの割合 | 1%未満 | 1〜5%（FECで補える範囲） | 5%以上（音が途切れる） |
+| Q-04 | ジッター | 到着間隔のばらつき | 20ms未満 | 20〜50ms | 50ms以上 |
+| Q-05 | 実用距離 | Q-01〜Q-04がすべて🟡以上を保てる最大距離 | 想定シーン別に実測して記録する（[architecture.md §11.1](architecture.md)） | | |
 
----
+- 総合評価は **Q-01〜Q-04のうち最も悪いもの** で決める（例：1つでも🔴なら🔴）
+- 指標を **画面に表示する機能（F-50）を実装するかは未定**（任意）。実装しない場合も、開発中はログ出力で確認できるようにする
 
-# 6. セキュリティ & プライバシー
+| ID | 要件（任意） |
+|---|---|
+| F-50 | 通話画面で通信品質を確認できる（総合評価をアイコンの色で表示し、タップすると Q-01〜Q-04 の数値を表示する） |
 
-* **ローカル接続でも暗号化**：WebRTCのDTLS/SRTPを利用（デフォルトで提供）。
-* **発見時の承認フロー**：ユーザーが参加を明示承認。自動接続は避ける（走行中誤接続リスク）。
-* **ローカルネットワーク権限表示**（iOS）や位置権限（Android）を透明に説明するUI。
+## 7. MVPの対象外（将来検討）
 
----
+| 項目 | 備考 |
+|---|---|
+| iOS対応 | Flutterなので追加は可能。ビルドにMac（またはクラウドのmacOS環境）が必要 |
+| PTT（押して話す） | 常時通話で開始。必要になれば追加 |
+| 長距離対応（中継機） | Wi-Fi HaLow等。技適取得済み製品のみ。アプリ側は変更不要の設計にしてある |
+| クラウド経由の通話 | 対象外 |
+| ホスト引き継ぎ | ホスト退出時にルームを維持する機能 |
+| 5人以上 | メッシュ方式の限界。必要ならSFU方式を検討 |
+| 音楽・ナビ音声とのミキシング | OSの標準動作に任せる |
+| テキストチャット | 対象外 |
 
-# 7. エッジケースとフォールバック
+## 8. 用語
 
-* **混在環境（iOS + Android）**：Multipeer と Nearby の両実装を行い、共通のブリッジ（BLEで最初にroom tokenを渡す→その後UDP/mDNSでSDP交換）を実装する。
-* **インターネット接続が有る場合**：同一プロトコル（WebRTC）でクラウドSFUに接続して遠隔とブリッジ。クラウドはあくまでオプション。
-* **大きな負荷（>4人）**：ローカルSFU導入を推奨。
-
----
-
-# 8. 必要なライブラリ候補（実装の早道）
-
-* **libwebrtc**（ネイティブ iOS/Android） — WebRTCの公式実装（推奨）。([moontechnolabs.com][8])
-* **Pion (Go)** — 軽量SFUを自前で構築する場合の選択肢（Raspberry Piなどで動作）。([digitalsamba.com][5])
-* **Janus / mediasoup** — ローカルSFUを検討するときの成熟したサーバ。
-* （商用SDKはクラウド寄りだが、実装を楽にする：Agora/Twilio。ただしローカル完全オフラインでは自前WebRTCが有利）
-
----
-
-# 9. ユーザ操作フロー（例）
-
-1. アプリ起動 → 「近くのライダーを検索」 → BLEまたはMultipeer/Nearbyでルームを検出。
-2. 招待/承認 → SDP/ICE を交換 → WebRTC接続確立（各PeerとP2P接続）
-3. 音声通話開始（ミュート、優先スピーカー、他のUI）。
-4. 「Webモード」を選べばローカルSFU/クラウドSFUで外部通話とブリッジ。
-
----
-
-# 10. テスト項目（必須）
-
-* デバイス組み合わせ試験（iOS(iPhone内蔵Wi-Fi) ↔ Android機種 × 複数）
-* 同一LANでのレイテンシ測定（往復・片道）、目標: 1人当たりの往復 < 150ms
-* メッシュで4人接続時のCPU使用率とネットワーク上行/下行帯域測定
-* ヘッドセット接続時の音声ルーティング検証（HFPヘッドセットとの連携）
-* オフライン（AP無し、Wi-Fi Direct）での発見・接続シナリオ検証
-
----
-
-# 11. マイルストーン（開発フェーズ提案）
-
-1. **PoC-1（2週間）**：同一プラットフォーム同士でのWebRTC P2P音声（1対1）— ローカルのみ、低遅延確認。
-2. **PoC-2（3–4週間）**：メッシュで4人接続（同一OS）。発見は簡易UDP/mDNSで実装。レイテンシ測定。
-3. **PoC-3（4週間）**：iOS↔Android混在。Multipeer/Nearby/ BLEブリッジ実装でクロス接続。
-4. **拡張**：ローカルSFU on Raspberry Pi（必要なら）／クラウドブリッジの実装。
-
-> 補足：上の期間はあくまで目安で、チーム人員や既存の経験で変わります（ここで期間を保証はしません）。
-
----
-
-# 参考（抜粋）
-
-* Apple MultipeerConnectivity ドキュメント（発見＋ストリーミング）. ([Apple Developer][2])
-* Android Wi-Fi Direct / Nearby Connections API（P2P 概要）. ([Android Developers][3])
-* WebRTC アーキテクチャ（P2P vs SFU）・設計考察. ([Stream][1])
-* 低遅延ローカル音声配信の実例（SonoBus 等）. ([sonobus.net][7])
-
----
-
-もしこれでOKなら、次はどちらに進めますか？（選んでください — どちらでもすぐ作ります）
-
-1. **最短プロトタイプ（コード付き）**：iOSとAndroidで「同一Wi-Fi上の4人メッシュ」最小実装（libwebrtc を使ったサンプル）。
-2. **クロス発見設計（実コード）**：iOS:Multipeer + Android:Nearby + BLEブリッジ のサンプル実装（シグナリング交換含む）。
-3. **ローカルSFUオプション設計**：Raspberry Pi + Pion/Janus のセットアップ手順とクライアント切替ロジック。
-
-どれを最初に出しますか？（選んだら、具体的なコード／シーケンス図／API一覧を作成します）
-
-[1]: https://getstream.io/resources/projects/webrtc/architectures/p2p/?utm_source=chatgpt.com "Peer-To-Peer (P2P)"
-[2]: https://developer.apple.com/documentation/multipeerconnectivity?utm_source=chatgpt.com "Multipeer Connectivity | Apple Developer Documentation"
-[3]: https://developer.android.com/develop/connectivity/wifi/wifi-direct?utm_source=chatgpt.com "Create P2P connections with Wi-Fi Direct"
-[4]: https://www.sciencedirect.com/science/article/pii/S2542660523002184?utm_source=chatgpt.com "Nearby connections strategies: Features, usage, and ..."
-[5]: https://www.digitalsamba.com/blog/p2p-sfu-and-mcu-webrtc-architectures-explained?utm_source=chatgpt.com "P2P, SFU and MCU - WebRTC Architectures Explained"
-[6]: https://developers.google.com/nearby/connections/overview?utm_source=chatgpt.com "Overview | Nearby Connections"
-[7]: https://sonobus.net/?utm_source=chatgpt.com "SonoBus"
-[8]: https://www.moontechnolabs.com/blog/webrtc-architecture/?utm_source=chatgpt.com "A Complete Guide to WebRTC Architecture in 2025"
+| 用語 | 意味 |
+|---|---|
+| ルーム | 通話のまとまり。Discordのボイスチャンネル相当 |
+| ホスト | ルームを作った端末。参加の受付と接続の仲介（シグナリング）を担当する |
+| 親機 | テザリングでネットワークを提供する端末。通常はホストと同じ端末にする |
+| メッシュ | 参加者全員が互いに直接音声を送り合う方式 |
