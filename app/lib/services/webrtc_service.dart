@@ -21,6 +21,7 @@ class WebRTCService {
   RTCPeerConnection? _peerConnection;
   MediaStream? _localStream;
   MediaStream? _remoteStream;
+  MediaStream? get remoteStream => _remoteStream;
 
   bool _isMuted = false;
   bool get isMuted => _isMuted;
