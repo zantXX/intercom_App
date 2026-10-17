@@ -7,13 +7,9 @@ import 'services/call_controller.dart';
 import 'services/discovery_service.dart';
 import 'services/storage_service.dart';
 
-Future<void> main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  final storage = await StorageService.load();
-  final discovery = DiscoveryService();
-  final controller = CallController(storage: storage, discovery: discovery);
-  unawaited(controller.init());
-  runApp(IntercomApp(controller: controller));
+  runApp(const IntercomApp());
 }
 
 class IntercomApp extends StatefulWidget {
@@ -45,6 +41,7 @@ class _IntercomAppState extends State<IntercomApp> {
     if (!mounted) return;
     final discovery = DiscoveryService();
     final ctrl = CallController(storage: storage, discovery: discovery);
+    unawaited(ctrl.init());
     setState(() {
       _controller = ctrl;
     });
@@ -79,6 +76,7 @@ class _IntercomAppState extends State<IntercomApp> {
       ),
       home: ctrl == null
           ? const Scaffold(
+              backgroundColor: Color(0xFF1E1F22),
               body: Center(child: CircularProgressIndicator()),
             )
           : HomeScreen(controller: ctrl),

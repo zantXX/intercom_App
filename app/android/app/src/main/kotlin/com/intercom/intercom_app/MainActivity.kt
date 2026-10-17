@@ -96,6 +96,17 @@ class MainActivity : FlutterActivity() {
                     stopPlayback()
                     result.success(true)
                 }
+                "readStore" -> {
+                    val file = File(filesDir, "intercom_store.json")
+                    val text = if (file.exists()) file.readText(Charsets.UTF_8) else null
+                    result.success(text)
+                }
+                "writeStore" -> {
+                    val json = call.argument<String>("json") ?: "{}"
+                    val file = File(filesDir, "intercom_store.json")
+                    file.writeText(json, Charsets.UTF_8)
+                    result.success(true)
+                }
                 else -> result.notImplemented()
             }
         }

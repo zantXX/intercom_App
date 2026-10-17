@@ -121,18 +121,16 @@ Copy-Item build\app\outputs\flutter-apk\app-arm64-v8a-release.apk ..\releases\in
 ```
 
 ### 4.3 実機へのインストール・デバッグ実行
+> **注意（Windows PowerShellでのADBハング防止）**：
+> PowerShellから直接 `adb.exe` を呼ぶ際、`adb` のバックグラウンドデーモン（`fork-server`）が標準出力パイプを掴んだままになりコマンド終了待ちで止まることがある。そのため、単発の `adb` コマンド実行時は末尾に `; adb.exe kill-server` を付けると1秒で確実に終了する。
+
 - **接続端末の確認**：
   ```powershell
-  flutter devices
+  C:\Users\zant\AppData\Local\Android\Sdk\platform-tools\adb.exe devices -l; C:\Users\zant\AppData\Local\Android\Sdk\platform-tools\adb.exe kill-server
   ```
-- **ビルド済みリリースAPKをADB経由で直接インストールする場合**：
+- **ビルド済みリリースAPKをADB経由で直接インストール＆起動する場合**：
   ```powershell
-  adb install -r releases\intercom-app-release.apk
-  ```
-- **デバッグ実行（全台同時）**：
-  ```powershell
-  cd app
-  flutter run -d all
+  C:\Users\zant\AppData\Local\Android\Sdk\platform-tools\adb.exe install -r releases\intercom-app-release.apk; C:\Users\zant\AppData\Local\Android\Sdk\platform-tools\adb.exe shell am start -n com.intercom.intercom_app/.MainActivity; C:\Users\zant\AppData\Local\Android\Sdk\platform-tools\adb.exe kill-server
   ```
 
 ---
