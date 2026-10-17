@@ -99,38 +99,57 @@ intercom_App/
    └─ android/app/src/main/
       ├─ AndroidManifest.xml           # 音声・Bluetooth・mDNS（CHANGE_WIFI_MULTICAST_STATE）権限
       └─ kotlin/com/intercom/intercom_app/
-         └─ MainActivity.kt            # MethodChannel "intercom/audio"（出力切替・BT監視・WAV録音テスト）
+         └─ MainActivity.kt            # MethodChannel "intercom/audio"（出力切替・BT監視・WAV録音・JSON永続化）
 ```
 
 ---
 
-## 4. よく使うコマンド（`app/` ディレクトリで実行）
+## 4. よく使うコマンドと実機インストール手順
 
-### 4.1 静的解析
+### 4.1 静的解析（`app/` ディレクトリで実行）
+> **注意**：Windows の開発者モードが無効な環境で `flutter pub get` が走るとプラグインの symlink 作成エラーになるため、`pubspec.yaml` を変更していない場合は **`--no-pub`** を付けること。
+
 ```powershell
-cd app
-flutter analyze
+flutter analyze --no-pub
 ```
 
 ### 4.2 配布用リリースAPKのビルドと `releases/` への反映
-コードを変更したら、以下のコマンドで `releases/intercom-app-release.apk` を最新化してください。
+コードを変更したら、以下の単一コマンドでビルドし、`releases/intercom-app-release.apk` を最新化してください。
 ```powershell
-cd app
-flutter build apk --release --split-per-abi
-Copy-Item build\app\outputs\flutter-apk\app-arm64-v8a-release.apk ..\releases\intercom-app-release.apk -Force
+# 1. app/ ディレクトリでビルド
+flutter build apk --release --split-per-abi --no-pub
+
+# 2. リポジトリルートで releases/ へコピー
+Copy-Item app\build\app\outputs\flutter-apk\app-arm64-v8a-release.apk releases\intercom-app-release.apk -Force
 ```
 
-### 4.3 実機へのインストール・デバッグ実行
-> **注意（Windows PowerShellでのADBハング防止）**：
-> PowerShellから直接 `adb.exe` を呼ぶ際、`adb` のバックグラウンドデーモン（`fork-server`）が標準出力パイプを掴んだままになりコマンド終了待ちで止まることがある。そのため、単発の `adb` コマンド実行時は末尾に `; adb.exe kill-server` を付けると1秒で確実に終了する。
+### 4.3 実機2台（Pixel 8a / OPPO Reno3 A）へのインストール・起動
+- **端末シリアル / ワイヤレスデバッグ情報**：
+  - **Google Pixel 8a**：USBシリアル `42261JEKB13039` ／ ワイヤレスADBポート `5555`（例：`10.29.214.213:5555`）
+  - **OPPO Reno3 A**：USBシリアル `1f7d8c64`（モデル `CPH2013`） ／ ワイヤレスADBポート `5556`（例：`10.29.214.211:5556`）
 
-- **接続端末の確認**：
+- **ユーザーの PowerShell から直接インストール＆起動するスクリプト（推奨・最速）**：
+  AI の `run_command` 承認待ちロックを避けるため、実機へのADB転送はユーザー自身の PowerShell（`c:\Users\zant\git_project\intercom_App`）で以下を実行してもらうのが最も確実・高速である。
   ```powershell
-  C:\Users\zant\AppData\Local\Android\Sdk\platform-tools\adb.exe devices -l; C:\Users\zant\AppData\Local\Android\Sdk\platform-tools\adb.exe kill-server
+  $apk = "c:\Users\zant\git_project\intercom_App\releases\intercom-app-release.apk"
+  $adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
+
+  # USB接続中の Pixel 8a に入れて起動する場合
+  & $adb -s 42261JEKB13039 install -r $apk
+  & $adb -s 42261JEKB13039 shell monkey -p com.intercom.intercom_app -c android.intent.category.LAUNCHER 1
+
+  # USB接続中の OPPO Reno3 A に入れて起動する場合
+  & $adb -s 1f7d8c64 install -r $apk
+  & $adb -s 1f7d8c64 shell monkey -p com.intercom.intercom_app -c android.intent.category.LAUNCHER 1
   ```
-- **ビルド済みリリースAPKをADB経由で直接インストール＆起動する場合**：
+- **ワイヤレスADBで行なう場合（USBで `tcpip 5555` / `5556` 有効化後）**：
   ```powershell
-  C:\Users\zant\AppData\Local\Android\Sdk\platform-tools\adb.exe install -r releases\intercom-app-release.apk; C:\Users\zant\AppData\Local\Android\Sdk\platform-tools\adb.exe shell am start -n com.intercom.intercom_app/.MainActivity; C:\Users\zant\AppData\Local\Android\Sdk\platform-tools\adb.exe kill-server
+  $apk = "c:\Users\zant\git_project\intercom_App\releases\intercom-app-release.apk"
+  $adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
+  & $adb -s 10.29.214.213:5555 install -r $apk
+  & $adb -s 10.29.214.211:5556 install -r $apk
+  & $adb -s 10.29.214.213:5555 shell monkey -p com.intercom.intercom_app -c android.intent.category.LAUNCHER 1
+  & $adb -s 10.29.214.211:5556 shell monkey -p com.intercom.intercom_app -c android.intent.category.LAUNCHER 1
   ```
 
 ---
@@ -140,9 +159,9 @@ Copy-Item build\app\outputs\flutter-apk\app-arm64-v8a-release.apk ..\releases\in
 | マイルストーン | 状態 | 内容 |
 |---|---|---|
 | **M0 / M1** | ✅ 完了 | 環境構築、1対1 WebRTC P2P音声通話（実機2台で検証済み） |
-| **M2** | ✅ 実装完了（実機検証待ち） | ルーム作成・mDNS自動検出・プロフィール・最近の接続（⭐）・自動参加 |
-| **M4（前倒し）** | ✅ 実装完了（実機検証待ち） | 音声出力デバイスの切り替え（スピーカー/受話口/有線/Bluetooth自動切替） |
-| **ノイズ対策** | ✅ 実装完了（実機検証待ち） | ノイズ抑制・ノイズゲート（しきい値調整）＋マイク＆録音聴き返しテスト |
+| **M2** | 🟡 実機検証中 | ルーム作成・mDNS自動検出・プロフィール・最近の接続（⭐）・自動参加（Reno3 Aで起動確認済み） |
+| **M4（前倒し）** | 🟡 実機検証中 | 音声出力デバイスの切り替え（スピーカー/受話口/有線/Bluetooth自動切替） |
+| **ノイズ対策** | 🟡 実機検証中 | ノイズ抑制・ノイズゲート（しきい値調整）＋マイク＆録音聴き返しテスト |
 | **M3** | 未着手 | 3〜4人フルメッシュ通話への拡張（`peerId` 辞書順でのoffer制御）、参加者長押しでの個別音量調整（0〜200%） |
 | **M5** | 未着手 | バックグラウンド常駐（Android Foreground Service `microphone`、`PARTIAL_WAKE_LOCK`、`WifiLock`、常駐通知からのミュート・退出）＋切断時の自動再接続 |
 | **M6** | 未着手 | テザリング＋実走テスト（距離測定 Q-01〜Q-05、風切り音の実走評価） |
@@ -157,6 +176,36 @@ Copy-Item build\app\outputs\flutter-apk\app-arm64-v8a-release.apk ..\releases\in
 |---|---|---|---|
 | **1** | **方針・仕様の決定／変更時**<br/>（ユーザーとの対話で新しい仕様・設計方針・優先順位が決まったとき） | `AGENTS.md`（§2 意思決定ログ）<br/>`docs/requirements_definition.md`<br/>`docs/architecture.md` | 合意した背景（ユーザーの要望・課題）と決定した解決方針を追記・更新する |
 | **2** | **ファイルの追加・削除・構成変更時**<br/>（新しいDartファイルやネイティブコードを追加・削除・統合したとき） | `AGENTS.md`（§3 ディレクトリ構成） | ツリー図と各ファイルの1行説明を最新の状態に同期する |
-| **3** | **機能実装・バグ修正の完了時**<br/>（コード変更を伴う1つの作業単位が完了し、`flutter analyze` が通過したとき） | `AGENTS.md`（§2・§5 残タスク）<br/>`README.md`<br/>`releases/intercom-app-release.apk` | ① マイルストーンの進捗状態を更新する<br/>② 変更がアプリ動作に影響する場合はリリースAPKを再ビルドして `releases/intercom-app-release.apk` を最新化する（※ユーザーが「ビルド不要」と明示した場合を除く） |
-| **4** | **実機テスト・検証結果の判明時**<br/>（実機で動作確認・距離測定・不具合確認を行ったとき） | `AGENTS.md`（§2・§5）<br/>`docs/architecture.md`（§11 検証項目） | 確認できた動作結果、発生した端末固有の事象、およびその対処内容を記録する |
+| **3** | **機能実装・バグ修正の完了時**<br/>（コード変更を伴う1つの作業単位が完了し、`flutter analyze --no-pub` が通過したとき） | `AGENTS.md`（§2・§5 残タスク）<br/>`README.md`<br/>`releases/intercom-app-release.apk` | ① マイルストーンの進捗状態を更新する<br/>② 変更がアプリ動作に影響する場合はリリースAPKを再ビルドして `releases/intercom-app-release.apk` を最新化する（※ユーザーが「ビルド不要」と明示した場合を除く） |
+| **4** | **実機テスト・検証結果の判明時**<br/>（実機で動作確認・距離測定・不具合確認を行ったとき） | `AGENTS.md`（§2・§5・§7）<br/>`docs/architecture.md`（§11 検証項目） | 確認できた動作結果、発生した端末固有の事象、およびその対処内容を記録する |
+
+---
+
+## 7. トラブルシューティング・再発防止ルール（必読）
+
+過去に実際に発生したトラブルと、その再発防止ルールです。**AIエージェントは以下の禁止事項・対策を厳守してください。**
+
+### 7.1 `run_command` タスクの承認待ちフリーズ（10秒タイムアウト問題）
+- **発生事象**：
+  - この Windows 環境（24H2未満）では `exebox` サンドボックスが動作しないため、`run_command` は `BypassSandbox: true`（要ユーザー承認）で実行される。
+  - `run_command` の `WaitMsBeforeAsync`（最大10秒）以内に承認されないままバックグラウンドタスクに移行すると、**UI上から承認ボタンが押せなくなり、ログ0バイトのままタスクが永久に固まる**。
+  - さらに `;` や `&&`、`|`、`$変数` を使った複合コマンドは「常に許可（Always Allow）」のプレフィックス一致が無効化されるため、毎回手動承認が必要になり高確率でこのロックを引き起こす。
+- **再発防止ルール**：
+  1. **`run_command` で `;` や `&&` による複数コマンド連結を行わない**。必ず自動承認が効く単一コマンド（`flutter analyze --no-pub`、`flutter build apk --release --split-per-abi --no-pub`、`Copy-Item ...`）で1つずつ実行する。
+  2. **ADBコマンドでタスクがバックグラウンド化（固まり）した場合は即キャンセルし、何度も `run_command` でリトライしない**。代わりに §4.3 の PowerShell コマンドブロックをユーザーに提示し、手元の PowerShell で実行してもらう。
+
+### 7.2 実機起動時のスプラッシュ画面フリーズ（`shared_preferences_android` クラッシュ）
+- **発生事象**：
+  - `shared_preferences_android` プラグインが Android Gradle Plugin 9 / Kotlin Coroutines の ABI 不一致およびリリースビルド時の R8 難読化によって `java.lang.NoSuchMethodError: SharedPreferencesApiRegistrar.getAll` を投げ、`runApp()` 到達前にクラッシュしてスプラッシュ画面で止まった。
+- **再発防止ルール**：
+  1. **`shared_preferences` パッケージは使用しない**（`GeneratedPluginRegistrant.java` にも登録しない）。永続化はすべて `MainActivity.kt` の `MethodChannel("intercom/audio")`（`readStore` / `writeStore` → `filesDir/intercom_store.json`）経由で行う。
+  2. **`main.dart` の `main()` では `runApp()` の前に `await` を置かない**。必ず同期的に `runApp(const IntercomApp())` を呼び、初期化は Widget 内の非同期処理で行う。
+  3. **`android/app/build.gradle.kts` の `release` ビルドでは `isMinifyEnabled = false` / `isShrinkResources = false` を維持する**（WebRTC や mDNS プラグインの JNI メソッド消失防止）。
+
+### 7.3 Windows での `flutter pub get` シンボリックリンクエラー
+- **発生事象**：
+  - Windows の「開発者モード」がOFFの環境で `flutter pub get` が走ると、`Building with plugins requires symlink support` で停止する。
+- **再発防止ルール**：
+  - `flutter analyze` や `flutter build` を行う際は、常に **`--no-pub`** オプションを付与する。
+
 
